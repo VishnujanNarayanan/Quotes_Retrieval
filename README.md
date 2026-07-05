@@ -130,15 +130,6 @@ if st.button("Retrieve Quotes"):
 
 MIT License — Use and modify freely.
 
----
-
-## 🙌 Credits
-
-Developed by Vishnujan Narayanan for AI Developer Internship Assignment.
-
----
-
-If you want me to generate the `requirements.txt` or any other file, just say so!
 
 
 
