@@ -1,0 +1,32 @@
+# Secrets - contains API tokens, never commit
+.streamlit/secrets.toml
+app/.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+.jupyter/
+
+# OS / editor
+.DS_Store
+*.swp
+*Zone.Identifier
+
+# Resume tooling artifacts
+resume_extract*.yaml
+
+# Data backups from clean_quotes.py
+*.jsonl.bak
