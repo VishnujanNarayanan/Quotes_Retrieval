@@ -10,7 +10,6 @@ Data
 **/*.pyc
 **/quotes.jsonl.bak
 app/quotes.db
-app/quote_index.faiss
 app/.streamlit/secrets.toml
 bullet_extract*.yaml
 resume_extract*.yaml

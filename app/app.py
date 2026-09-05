@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import db
+import embed_cache
 import retrieval
 from retrieval import RELEVANCE_PCT  # noqa: F401  (documented in Configuration)
 from sentence_transformers import SentenceTransformer
@@ -49,10 +50,21 @@ AUTHORS = db.author_catalogue(con)
 
 @st.cache_resource
 def load_model_and_index():
+    """The encoder, the FAISS index, and the corpus embedding matrix.
+
+    The corpus vectors come from the cache when its fingerprint still matches the
+    current corpus and model; encoding all of them is what used to dominate a cold
+    start. The model itself is loaded either way, since queries still need encoding.
+    Building the flat index from vectors already in memory is effectively free.
+    """
     model = SentenceTransformer(str(MODEL_DIR))
-    all_quotes = [q['quote'] for q in quotes_data]
-    embeddings = model.encode(all_quotes, convert_to_tensor=True)
-    embeddings_np = embeddings.cpu().detach().numpy().astype('float32')
+
+    embeddings_np = embed_cache.load(quotes_data, MODEL_DIR)
+    if embeddings_np is None:
+        all_quotes = [q['quote'] for q in quotes_data]
+        embeddings = model.encode(all_quotes, convert_to_tensor=True)
+        embeddings_np = embeddings.cpu().detach().numpy().astype('float32')
+        embed_cache.save(embeddings_np, quotes_data, MODEL_DIR)
 
     index = retrieval.build_index(embeddings_np)
     return model, index, embeddings_np

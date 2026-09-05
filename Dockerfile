@@ -28,6 +28,14 @@ WORKDIR /srv/app
 # a cold container does not pay for it. The app rebuilds it if it is missing.
 RUN python build_db.py
 
+# The embedding cache ships in the build context; verify it validates against the
+# model in the image rather than discovering at runtime that it does not.
+RUN python -c "import sys; sys.path.insert(0,'.'); \
+    import embed_cache; from retrieval import load_quotes_data; from pathlib import Path; \
+    q=load_quotes_data('quotes.jsonl'); \
+    assert embed_cache.load(q, Path('fine-tuned-quote-model')) is not None, \
+    'embedding cache missing or stale - run app/build_embeddings.py'"
+
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s \
