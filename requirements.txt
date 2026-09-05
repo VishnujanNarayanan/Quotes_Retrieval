@@ -1,0 +1,17 @@
+# Runtime dependencies, pinned to the versions the app was built and tested against.
+# See requirements-dev.txt for the light set the test suite and CI need.
+#
+# The CPU wheel index is not optional. PyPI's default linux torch wheel is the
+# CUDA build (multiple GB), which exceeds the resource limit on free hosts like
+# Streamlit Community Cloud; the app runs inference on CPU and never needs it.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+streamlit==1.60.0
+sentence-transformers==5.6.1
+faiss-cpu==1.14.3
+torch==2.13.0
+pandas==2.3.3
+numpy==2.2.6
+huggingface-hub==1.24.0
+ftfy==6.3.1
+scikit-learn==1.7.2        # eval/baseline.py — the TF-IDF retrieval baseline

@@ -1,0 +1,9 @@
+# What the test suite and CI need — deliberately WITHOUT torch and
+# sentence-transformers. app/retrieval.py, app/db.py and app/clean_quotes.py hold
+# no model code, so the whole suite runs on this light set in well under a minute.
+pandas==2.3.3
+numpy==2.2.6
+faiss-cpu==1.14.3
+ftfy==6.3.1
+pytest==9.1.1
+ruff==0.16.6

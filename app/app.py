@@ -1,98 +1,65 @@
-import os
 import html
+import os
+
 import streamlit as st
+
 st.set_page_config(
     page_title="Commonplace — Semantic Quote Retrieval",
     page_icon="💬",
     layout="wide",
 )
-import pandas as pd
-import re
-import numpy as np
-import faiss
+import sys
+from pathlib import Path
+
+# Resolve everything relative to this file, not to the working directory. Hosted
+# runners (Streamlit Community Cloud, a Hugging Face Space) start the script from
+# the repository root, and the previous relative paths only worked when the app
+# was launched from inside app/.
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+import db
+import retrieval
+from retrieval import RELEVANCE_PCT  # noqa: F401  (documented in Configuration)
 from sentence_transformers import SentenceTransformer
 
 # ------------------ Load & Preprocess ------------------
 
-def load_quotes_data():
-    df = pd.read_json("quotes.jsonl", lines=True)
-    clean_data = []
-    for _, row in df.iterrows():
-        raw_quote = str(row.get('quote', '')).strip()
-        raw_author = str(row.get('author', 'unknown')).strip()
-        raw_tags = [tag.strip() for tag in row.get('tags', []) if tag.strip()]
+CORPUS = HERE / "quotes.jsonl"
+MODEL_DIR = HERE / "fine-tuned-quote-model"
 
-        if raw_quote:
-            clean_data.append({
-                'quote': raw_quote,         # ← keep original casing
-                'author': raw_author,       # ← keep original casing
-                'tags': raw_tags,           # ← keep original casing
-                'quote_lc': raw_quote.lower(),   # for searching/filtering
-                'author_lc': raw_author.lower(),
-                # trailing commas are an artefact of the scrape; strip for exact matching
-                'author_key': raw_author.rstrip(',').strip(),
-                'tags_lc': [t.lower() for t in raw_tags]
-            })
-    return clean_data
-quotes_data = load_quotes_data()
+quotes_data = retrieval.load_quotes_data(CORPUS)
 
 
-def author_catalogue():
-    """Authors ordered by how many quotes they have, for the picker."""
-    counts = {}
-    for q in quotes_data:
-        if q['author_key']:
-            counts[q['author_key']] = counts.get(q['author_key'], 0) + 1
-    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+@st.cache_resource
+def open_db():
+    """Connection to quotes.db, built from the corpus if it is not there yet.
 
-AUTHORS = author_catalogue()
+    check_same_thread=False because Streamlit reruns the script on a worker
+    thread while the cached connection stays put; the app only ever reads.
+    """
+    if not db.DB_PATH.exists():
+        db.build(quotes_data).close()
+    return db.connect(check_same_thread=False)
+
+
+con = open_db()
+AUTHORS = db.author_catalogue(con)
+
 
 @st.cache_resource
 def load_model_and_index():
-    model = SentenceTransformer("fine-tuned-quote-model")
+    model = SentenceTransformer(str(MODEL_DIR))
     all_quotes = [q['quote'] for q in quotes_data]
     embeddings = model.encode(all_quotes, convert_to_tensor=True)
     embeddings_np = embeddings.cpu().detach().numpy().astype('float32')
 
-    index = faiss.IndexFlatL2(embeddings_np.shape[1])
-    index.add(embeddings_np)
+    index = retrieval.build_index(embeddings_np)
     return model, index, embeddings_np
 
 model, index, embeddings_np = load_model_and_index()
 
-# ------------------ Query Parsing ------------------
-
-def parse_advanced_query(query):
-    """Pull tag filters out of the query text. Author now has its own field."""
-    tags = []
-    tag_match = re.search(r"tagged with both ['\"]?(\w+)['\"]?\s+and\s+['\"]?(\w+)", query, re.IGNORECASE)
-    if tag_match:
-        tags = [tag_match.group(1).lower(), tag_match.group(2).lower()]
-    else:
-        tag_match = re.search(r"tagged ['\"]?(\w+)['\"]?", query, re.IGNORECASE)
-        if tag_match:
-            tags = [tag_match.group(1).lower()]
-
-    return tags
-
 # ------------------ Quote Retrieval ------------------
-
-# Distances shift per query (best match for "courage in the face of fear" is 0.39,
-# for "love" it is 0.99), so a fixed cutoff cannot work. A quote counts as on-topic
-# if it lands in the closest RELEVANCE_PCT of the corpus for that particular query.
-RELEVANCE_PCT = 5.0
-
-
-def _pack(idx, distance, is_filler):
-    q = quotes_data[idx]
-    return {
-        'quote': q['quote'],
-        'author': q['author_key'] or q['author'],
-        'tags': q['tags'],
-        'distance': None if distance is None else float(distance),
-        'is_filler': is_filler,
-    }
-
 
 def _embed(text):
     vec = model.encode(text, convert_to_tensor=True)
@@ -100,65 +67,18 @@ def _embed(text):
 
 
 def search_quotes(query, author=None, top_k=5):
-    """Rank quotes by meaning, optionally anchored to one author.
+    """Thin wrapper over retrieval.search_quotes.
 
-    Author quotes that are genuinely on-topic come first. Whatever slots remain —
-    because the author has too few quotes, or their remaining ones drift off-topic —
-    are filled with the closest quotes from other authors, flagged as fillers.
+    The tag filter is resolved in SQL against quotes.db and handed down as a
+    candidate set; the ranking itself is pure and lives in retrieval.py.
     """
-    filter_tags = parse_advanced_query(query)
-    clean_query = re.sub(r"tagged with.*|tagged.*", "", query, flags=re.IGNORECASE).strip()
+    tags = retrieval.parse_advanced_query(query)
+    eligible_ids = db.ordinals_with_all_tags(con, tags) if tags else None
+    return retrieval.search_quotes(
+        query, quotes_data, index, embeddings_np, _embed,
+        author=author, top_k=top_k, eligible_ids=eligible_ids,
+    )
 
-    def tags_ok(i):
-        return all(t in quotes_data[i]['tags_lc'] for t in filter_tags) if filter_tags else True
-
-    def by_author(i):
-        return bool(author) and quotes_data[i]['author_key'] == author
-
-    eligible = [i for i in range(len(quotes_data)) if tags_ok(i)]
-    if not eligible:
-        return []
-
-    # ---- author only: no query to rank by, so anchor on what the author writes about
-    if not clean_query:
-        if not author:
-            return []
-        own = [i for i in eligible if by_author(i)]
-        # no query means no distance to report — the meter would be meaningless
-        results = [_pack(i, None, False) for i in own[:top_k]]
-        if len(results) < top_k and own:
-            centroid = embeddings_np[own].mean(axis=0).reshape(1, -1)
-            probe = faiss.IndexFlatL2(embeddings_np.shape[1])
-            probe.add(embeddings_np)
-            dist, idx = probe.search(centroid, len(quotes_data))
-            own_set = set(own)
-            for d, i in zip(dist[0], idx[0]):
-                if len(results) >= top_k:
-                    break
-                if i not in own_set and tags_ok(i):
-                    results.append(_pack(i, d, True))
-        return results
-
-    # ---- one FAISS pass over the whole corpus gives ranking and threshold together
-    query_np = _embed(clean_query)
-    dist, idx = index.search(query_np, len(quotes_data))
-    ranked = [(d, i) for d, i in zip(dist[0], idx[0]) if tags_ok(i)]
-
-    if not author:
-        return [_pack(i, d, False) for d, i in ranked[:top_k]]
-
-    cutoff = np.percentile([d for d, _ in ranked], RELEVANCE_PCT)
-
-    results = [_pack(i, d, False) for d, i in ranked if by_author(i) and d <= cutoff][:top_k]
-
-    if len(results) < top_k:
-        for d, i in ranked:
-            if len(results) >= top_k:
-                break
-            if not by_author(i):
-                results.append(_pack(i, d, True))
-
-    return results
 
 # ------------------ Answer Generator ------------------
 

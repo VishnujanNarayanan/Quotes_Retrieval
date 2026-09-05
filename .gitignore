@@ -30,3 +30,8 @@ resume_extract*.yaml
 
 # Data backups from clean_quotes.py
 *.jsonl.bak
+
+# Resume extraction material — personal career data, never committed
+bullet_extract_latest.yaml
+bullet_extract_[0-9]*.yaml
+app/quotes.db

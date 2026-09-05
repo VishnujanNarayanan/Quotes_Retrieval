@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: ruff + pytest
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # requirements-dev.txt deliberately omits torch and sentence-transformers.
+      # The retrieval rules, the SQL layer and the corpus repair carry no model
+      # code, so the suite runs on the light set in seconds instead of pulling
+      # ~200 MB of wheels on every push.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Lint only, not `ruff format --check`. The existing code has its own
+      # settled style (single quotes, aligned comments); enforcing a formatter
+      # now would rewrite every file and bury real diffs in whitespace.
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest tests -q

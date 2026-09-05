@@ -27,7 +27,8 @@ BACKUP = DATA.with_suffix(".jsonl.bak")
 # Bytes that windows-1252 leaves undefined were replaced by U+FFFD during the
 # original bad decode, so the information is gone and ftfy cannot reverse it.
 # Only two such sequences occur in this corpus, and context makes both certain:
-#   "a<U+20AC><U+FFFD>" closes a quotation that opened with a left double quote -> byte 0x9D -> U+201D
+#   "a<U+20AC><U+FFFD>" closes a quotation opened with a left double quote
+#       -> byte 0x9D -> U+201D
 #   "U<U+FFFD>" sits inside Arabic words that only parse with feh          -> byte 0x81 -> U+0641
 DESTROYED_BYTES = {
     "â€�": "”",
@@ -76,10 +77,16 @@ def repair(text):
 
     fix_encoding is used rather than fix_text because fix_text also straightens
     curly quotation marks, and the corpus's typographic quotes are correct as-is.
+
+    DESTROYED_BYTES is substituted BEFORE fix_encoding, not after. Those runs
+    contain U+FFFD, and fix_encoding collapses the run to a bare U+FFFD on its
+    own — after which the original sequence is unrecognisable and the mapping
+    can never fire. Substituting first restores the intended character while the
+    evidence for it is still there; every other case is unaffected either way.
     """
-    text = ftfy.fix_encoding(text)
     for broken, intended in DESTROYED_BYTES.items():
         text = text.replace(broken, intended)
+    text = ftfy.fix_encoding(text)
     return repair_fragments(text)
 
 
@@ -128,7 +135,7 @@ def main():
 
     # ---- refuse to write anything that loses data
     assert len(cleaned) == len(records), "record count changed"
-    for old, new in zip(records, cleaned):
+    for old, new in zip(records, cleaned, strict=True):
         assert bool(old.get("quote", "").strip()) == bool(new.get("quote", "").strip()), \
             "a quote became empty"
         assert len(old.get("tags") or []) == len(new.get("tags") or []), "tag count changed"

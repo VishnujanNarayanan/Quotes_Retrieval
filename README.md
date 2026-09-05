@@ -12,8 +12,12 @@
   <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-2.7-EE4C2C?logo=pytorch&logoColor=white"/>
   <img alt="Streamlit" src="https://img.shields.io/badge/Streamlit-app-FF4B4B?logo=streamlit&logoColor=white"/>
   <img alt="Hugging Face" src="https://img.shields.io/badge/Hugging_Face-Inference_API-FFD21E?logo=huggingface&logoColor=black"/>
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-corpus_index-003B57?logo=sqlite&logoColor=white"/>
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white"/>
+  <img alt="CI" src="https://github.com/VishnujanNarayanan/Quotes_Retrieval/actions/workflows/ci.yml/badge.svg"/>
   <img alt="License" src="https://img.shields.io/badge/License-MIT-750014"/>
   <br>
+  <a href="https://vishnujan-narayanan.vercel.app/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-vishnujan--narayanan.vercel.app-3b5998?logo=googlechrome&logoColor=white&style=for-the-badge"/></a>
   <a href="https://github.com/VishnujanNarayanan"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-VishnujanNarayanan-181717?logo=github&logoColor=white&style=for-the-badge"/></a>
   <a href="https://www.linkedin.com/in/vishnujan-narayanan"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-Vishnujan_Narayanan-0A66C2?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0yMC40NDcgMjAuNDUyaC0zLjU1NHYtNS41NjljMC0xLjMyOC0uMDI3LTMuMDM3LTEuODUyLTMuMDM3LTEuODUzIDAtMi4xMzYgMS40NDUtMi4xMzYgMi45Mzl2NS42NjdIOS4zNTFWOWgzLjQxNHYxLjU2MWguMDQ2Yy40NzctLjkgMS42MzctMS44NSAzLjM3LTEuODUgMy42MDEgMCA0LjI2NyAyLjM3IDQuMjY3IDUuNDU1djYuMjg2ek01LjMzNyA3LjQzM2MtMS4xNDQgMC0yLjA2My0uOTI2LTIuMDYzLTIuMDY1IDAtMS4xMzguOTItMi4wNjMgMi4wNjMtMi4wNjMgMS4xNCAwIDIuMDY0LjkyNSAyLjA2NCAyLjA2MyAwIDEuMTM5LS45MjUgMi4wNjUtMi4wNjQgMi4wNjV6bTEuNzgyIDEzLjAxOUgzLjU1NVY5aDMuNTY0djExLjQ1MnpNMjIuMjI1IDBIMS43NzFDLjc5MiAwIDAgLjc3NCAwIDEuNzI5djIwLjU0MkMwIDIzLjIyNy43OTIgMjQgMS43NzEgMjRoMjAuNDUxQzIzLjIgMjQgMjQgMjMuMjI3IDI0IDIyLjI3MVYxLjcyOUMyNCAuNzc0IDIzLjIgMCAyMi4yMjIgMGguMDAzeiIvPjwvc3ZnPg%3D%3D&logoColor=white&style=for-the-badge"/></a>
   <a href="https://substack.com/@vishnujannarayanan"><img alt="Substack" src="https://img.shields.io/badge/Substack-@vishnujannarayanan-FF6719?logo=substack&logoColor=white&style=for-the-badge"/></a>
@@ -25,6 +29,7 @@
   🧠 <a href="#design-decisions">Design Decisions</a> ·
   ⚡ <a href="#installation">Installation</a> ·
   🧑‍💻 <a href="#usage">Usage</a> ·
+  ✅ <a href="#testing-and-evaluation">Testing & Evaluation</a> ·
   ⚙️ <a href="#configuration">Configuration</a> ·
   ⚠️ <a href="#limitations">Limitations</a>
 </p>
@@ -56,6 +61,12 @@ passage, grounded strictly in what was retrieved.
   instructed to use only the retrieved quotes.
 - **Corpus repair tool** — `clean_quotes.py` reverses the cp1252/UTF-8 mojibake in the scrape,
   with assertions that refuse to write if any record would be lost.
+- **SQLite catalogue** — the author picker and the tag intersection are SQL queries against
+  `quotes.db`, not Python scans of the whole corpus on every keystroke. The statements live in
+  `app/queries.sql` so they can be read and run on their own.
+- **Retrieval evaluation** — `eval/baseline.py` scores the fine-tuned encoder against a
+  scikit-learn TF-IDF baseline over a labelled query set, so "the fine-tune helped" is a
+  measurement rather than an assumption.
 
 ## Architecture
 
@@ -63,6 +74,7 @@ passage, grounded strictly in what was retrieved.
 flowchart TB
     subgraph Offline
         Raw["quotes.jsonl<br/>2,508 records"] --> Clean["clean_quotes.py<br/>mojibake repair"]
+        Clean --> DB["build_db.py<br/>SQLite catalogue"]
         Clean --> FT["Fine-tune all-MiniLM-L6-v2<br/>MultipleNegativesRankingLoss"]
         FT --> Model["fine-tuned-quote-model/"]
     end
@@ -71,6 +83,8 @@ flowchart TB
         Model --> Embed["Encode corpus"]
         Embed --> Index["FAISS IndexFlatL2"]
         Q["User query"] --> Parse["Parse tag filters"]
+        Parse --> SQL[("quotes.db<br/>SQL tag + author queries")]
+        SQL --> Index
         Parse --> QEmb["Encode query"]
         QEmb --> Index
         Index --> Rank["Rank + 5th-percentile cutoff"]
@@ -102,6 +116,18 @@ returning fewer results — hides why the query underdelivered.
 unreliable against 2,500 authors with inconsistent trailing punctuation. The picker uses
 `author_key` (trailing commas stripped) and orders authors by quote count.
 
+**Set operations belong in SQL, vector operations in FAISS.** Counting quotes per author and
+intersecting two tag filters were Python loops over the whole corpus on every interaction. They
+are one indexed query each against `quotes.db` now. The join between the two halves is
+`quotes.ordinal` — a record's position in `quotes.jsonl`, which is also its row in the embedding
+matrix — so a SQL filter can hand FAISS a candidate set directly. The vector search stays in
+FAISS, where it belongs; SQLite never sees an embedding.
+
+**Ranking is separated from the UI so it can be tested.** `retrieval.py` imports no Streamlit
+and no model: it takes a float32 matrix and a callable that embeds text. `app.py` supplies the
+real encoder, the tests supply six hand-placed vectors. Without that split, asserting anything
+about the percentile cutoff meant loading 91 MB of weights and starting a Streamlit session.
+
 **The index is rebuilt at startup, not loaded.** `load_model_and_index()` re-encodes the corpus
 under `@st.cache_resource`. The checked-in `quote_index.faiss` is an artefact of the notebook;
 the app does not read it.
@@ -111,19 +137,35 @@ the app does not read it.
 ```
 Quotes_Retrieval/
 ├── quotes_retrieval.ipynb          # Data prep, fine-tuning, FAISS build, LLM QA prototype
+├── requirements.txt                # Runtime deps, pinned
+├── requirements-dev.txt            # Test/CI deps — no torch, no sentence-transformers
+├── Dockerfile                      # Reproducible runtime, model baked in
+├── ruff.toml                       # Lint config
 ├── app/
-│   ├── app.py                      # Streamlit application (retrieval + synthesis + UI)
+│   ├── app.py                      # Streamlit application (UI + synthesis + wiring)
+│   ├── retrieval.py                # Ranking rules — no Streamlit, no model, unit-tested
+│   ├── db.py                       # SQLite access; loads the statements in queries.sql
+│   ├── schema.sql                  # Tables and indexes for quotes.db
+│   ├── queries.sql                 # Named, parameterised queries the app runs
+│   ├── build_db.py                 # Builds quotes.db from quotes.jsonl
 │   ├── clean_quotes.py             # Mojibake repair for quotes.jsonl (dry-run by default)
 │   ├── quotes.jsonl                # Working corpus, 2,508 records
-│   ├── quotes.jsonl.bak            # Pre-repair backup written by clean_quotes.py
+│   ├── quotes.db                   # Generated SQLite catalogue (gitignored)
 │   ├── quote_index.faiss           # Serialised index from the notebook
 │   ├── fine-tuned-quote-model/     # Saved SentenceTransformer (safetensors, tokenizer, pooling)
 │   └── .streamlit/
 │       ├── config.toml             # Dark theme matching the app's palette
 │       └── secrets.toml            # HF_TOKEN (not committed with a real value)
+├── tests/                          # pytest suite over retrieval, SQL and corpus repair
+├── eval/
+│   ├── baseline.py                 # Fine-tuned encoder vs a TF-IDF baseline
+│   └── queries.json                # Labelled query set, derived from the corpus tags
+├── .github/workflows/ci.yml        # ruff + pytest on ubuntu-latest
 └── Data/
     └── quotes_dataset.csv          # CSV export of the raw corpus
 ```
+
+
 
 ## Installation
 
@@ -142,11 +184,17 @@ source .venv/bin/activate      # Linux / macOS
 .venv\Scripts\activate         # Windows
 ```
 
-Install dependencies. There is no `requirements.txt` in the repository yet, so install the
-imports the app uses directly:
+Install dependencies:
 
 ```bash
-pip install streamlit sentence-transformers faiss-cpu pandas numpy huggingface-hub ftfy
+pip install -r requirements.txt
+```
+
+To work on the retrieval rules, the SQL layer or the corpus repair without pulling PyTorch,
+install the light set instead — it is what CI uses and it runs the whole test suite:
+
+```bash
+pip install -r requirements-dev.txt
 ```
 
 The fine-tuned model is committed under `app/fine-tuned-quote-model/` (~91 MB), so no training
@@ -156,14 +204,40 @@ is required to run the app.
 
 ### Run the app
 
-The model path in `app.py` is relative, so the app must be started from inside `app/`:
-
 ```bash
-cd app
-streamlit run app.py
+streamlit run app/app.py
 ```
 
-First load encodes all 2,508 quotes and builds the index; subsequent interactions are cached.
+Paths resolve relative to `app.py` itself, so it runs from anywhere — including a hosted
+runner that starts from the repository root.
+
+First load encodes all 2,508 quotes and builds the FAISS index; it also creates `quotes.db`
+if it is missing. Subsequent interactions are cached.
+
+### Run it in Docker
+
+```bash
+docker build -t commonplace .
+docker run --rm -p 8501:8501 -e HF_TOKEN=hf_xxx commonplace
+```
+
+The image bakes in the fine-tuned model and builds the SQLite catalogue at build time, so the
+container starts and searches with no network access. Drop `-e HF_TOKEN` to run retrieval-only.
+
+### Rebuild the SQLite catalogue
+
+The app does this itself when `quotes.db` is absent. Rebuild it deliberately after repairing
+the corpus:
+
+```bash
+python app/build_db.py
+```
+
+The queries it exposes are in `app/queries.sql`, so they can be run directly:
+
+```bash
+sqlite3 app/quotes.db "SELECT tag, COUNT(*) n FROM quote_tags GROUP BY 1 ORDER BY n DESC LIMIT 10;"
+```
 
 ### Search modes
 
@@ -189,6 +263,47 @@ python clean_quotes.py --apply    # backs up to quotes.jsonl.bak, then rewrites
 The script asserts that record count, tag counts, field sets, and quote non-emptiness are all
 preserved, and re-reads the file after writing to confirm it round-trips.
 
+## Testing and Evaluation
+
+### Tests
+
+```bash
+pytest tests -q          # 60 tests, ~1s
+ruff check .
+```
+
+`app/retrieval.py`, `app/db.py` and `app/clean_quotes.py` hold no Streamlit and no model code,
+so the suite runs on `requirements-dev.txt` alone — no PyTorch download, no 91 MB model load.
+The fixtures place six records at hand-chosen coordinates, so every ranking assertion is a
+statement about the retrieval rules rather than about the encoder.
+
+What it covers: tag-filter parsing and stripping · distance ranking and `top_k` · author
+anchoring, the percentile cutoff and filler backfill · the author-only centroid branch · the
+SQL author catalogue and tag intersection · ordinal-to-embedding-row correspondence · mojibake
+repair, the destroyed-byte mapping and the round-trip guarantees.
+
+### Retrieval evaluation
+
+```bash
+python eval/baseline.py              # both systems
+python eval/baseline.py --tfidf-only # skip the encoder, needs no torch
+```
+
+`eval/queries.json` holds 12 labelled queries; a retrieval counts as a hit when it returns a
+quote by an author who wrote something carrying the query's tag. Labels come from the corpus's
+own tags rather than from guesswork, so the set is reproducible.
+
+| System | recall@1 | recall@3 | recall@5 | recall@10 |
+|---|---|---|---|---|
+| TF-IDF baseline (scikit-learn) | 0.50 | 0.75 | 0.83 | 0.92 |
+| Fine-tuned sentence-transformer | 0.75 | 1.00 | 1.00 | 1.00 |
+
+The baseline is the point: fine-tuning is only worth its cost if it beats keyword matching over
+the same corpus, and nothing in the repository previously established that it did.
+
+This is a sanity check, not a benchmark. Twelve tag-derived queries catch a fine-tune that made
+retrieval worse; they do not measure how good the ranking is in absolute terms.
+
 ## Configuration
 
 | Setting | Where | Default |
@@ -197,7 +312,8 @@ preserved, and re-reads the file after writing to confirm it round-trips.
 | `SUMMARY_MODEL` | `app/app.py` | `meta-llama/Llama-3.3-70B-Instruct` |
 | `RELEVANCE_PCT` | `app/app.py` | `5.0` |
 | Model directory | `app/app.py` | `fine-tuned-quote-model` |
-| Corpus path | `app/app.py` | `quotes.jsonl` |
+| Corpus path | `app/app.py` | `quotes.jsonl`, resolved next to `app.py` |
+| SQLite path | `app/db.py` | `quotes.db`, resolved next to `db.py` |
 | Theme | `app/.streamlit/config.toml` | dark, brass `#C8A24A` on ink `#12161F` |
 
 Without a token the app still retrieves and displays quotes; only the synthesis panel is
@@ -226,6 +342,9 @@ disabled.
 | `huggingface-hub` | `InferenceClient` for the hosted Llama 3.3 summarisation |
 | `pandas` / `numpy` | JSONL loading and embedding arithmetic |
 | `ftfy` | Reversing the cp1252/UTF-8 mojibake in the scraped corpus |
+| `scikit-learn` | The TF-IDF retrieval baseline in `eval/baseline.py` |
+| `sqlite3` (stdlib) | The author catalogue and tag intersection in `app/queries.sql` |
+| `pytest`, `ruff` | Test suite and linting, run in CI on every push |
 
 ## Training
 
@@ -243,15 +362,20 @@ Reproduced in `quotes_retrieval.ipynb`:
 
 ## Limitations
 
-- **No retrieval evaluation.** The system is not scored with RAGAS, Quotient, or Phoenix, so
-  retrieval quality is assessed only by inspection.
-- **No `requirements.txt`.** Dependency versions are not pinned in the repository.
+- **The evaluation is thin.** `eval/baseline.py` compares against a TF-IDF floor on 12
+  tag-derived queries. That catches a regression; it is not RAGAS, Quotient or Phoenix, and the
+  labels are coarse — any quote by a matching author counts as a hit.
 - **`IndexFlatL2` is a brute-force scan.** Fine at 2,508 vectors; it does not scale.
 - **The corpus is re-encoded on every cold start** rather than loading the committed
   `quote_index.faiss`, which makes first paint slow.
 - **The full corpus is searched with `k = len(quotes_data)`** on every query to compute the
   percentile cutoff — correct, but wasteful.
 - **The notebook still reads from an absolute Windows path** and will not run unedited elsewhere.
+- **A tag-only query with no author returns nothing.** `tagged 'courage'` on its own leaves no
+  text to embed, so there is nothing to rank; the search-modes table above overstates it. Pair
+  the tag with a query or an author.
+- **The Docker image is unverified.** The `Dockerfile` is written against the pinned
+  requirements but has not been built end to end on this machine.
 - **`app/.streamlit/secrets.toml` is tracked**, so care is needed not to commit a live token.
 - **Synthesis depends on a third-party API.** No token means no synthesis, and failures surface
   as an inline error.
@@ -259,12 +383,12 @@ Reproduced in `quotes_retrieval.ipynb`:
 
 ## Roadmap
 
-- Add `requirements.txt` with pinned versions.
 - Load the persisted FAISS index instead of re-encoding at startup.
-- Add a retrieval evaluation harness with a labelled query set.
 - Restrict the FAISS search width instead of scanning the corpus for the percentile cutoff.
 - Move `secrets.toml` out of version control and document `.env`-based configuration.
 - Parameterise the notebook's dataset path.
+- Deploy publicly and put the link at the top of this file.
+- Widen the evaluation set and label it by relevance rather than by shared tag.
 
 ## License
 
@@ -283,6 +407,7 @@ dataset. Embeddings built on `sentence-transformers/all-MiniLM-L6-v2`.
 </p>
 
 <p align="center">
+  <a href="https://vishnujan-narayanan.vercel.app/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-vishnujan--narayanan.vercel.app-3b5998?logo=googlechrome&logoColor=white&style=for-the-badge"/></a>
   <a href="https://github.com/VishnujanNarayanan"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-VishnujanNarayanan-181717?logo=github&logoColor=white&style=for-the-badge"/></a>
   <a href="https://www.linkedin.com/in/vishnujan-narayanan"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-Vishnujan_Narayanan-0A66C2?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0yMC40NDcgMjAuNDUyaC0zLjU1NHYtNS41NjljMC0xLjMyOC0uMDI3LTMuMDM3LTEuODUyLTMuMDM3LTEuODUzIDAtMi4xMzYgMS40NDUtMi4xMzYgMi45Mzl2NS42NjdIOS4zNTFWOWgzLjQxNHYxLjU2MWguMDQ2Yy40NzctLjkgMS42MzctMS44NSAzLjM3LTEuODUgMy42MDEgMCA0LjI2NyAyLjM3IDQuMjY3IDUuNDU1djYuMjg2ek01LjMzNyA3LjQzM2MtMS4xNDQgMC0yLjA2My0uOTI2LTIuMDYzLTIuMDY1IDAtMS4xMzguOTItMi4wNjMgMi4wNjMtMi4wNjMgMS4xNCAwIDIuMDY0LjkyNSAyLjA2NCAyLjA2MyAwIDEuMTM5LS45MjUgMi4wNjUtMi4wNjQgMi4wNjV6bTEuNzgyIDEzLjAxOUgzLjU1NVY5aDMuNTY0djExLjQ1MnpNMjIuMjI1IDBIMS43NzFDLjc5MiAwIDAgLjc3NCAwIDEuNzI5djIwLjU0MkMwIDIzLjIyNy43OTIgMjQgMS43NzEgMjRoMjAuNDUxQzIzLjIgMjQgMjQgMjMuMjI3IDI0IDIyLjI3MVYxLjcyOUMyNCAuNzc0IDIzLjIgMCAyMi4yMjIgMGguMDAzeiIvPjwvc3ZnPg%3D%3D&logoColor=white&style=for-the-badge"/></a>
   <a href="https://substack.com/@vishnujannarayanan"><img alt="Substack" src="https://img.shields.io/badge/Substack-@vishnujannarayanan-FF6719?logo=substack&logoColor=white&style=for-the-badge"/></a>
