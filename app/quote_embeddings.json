@@ -1,0 +1,12 @@
+{
+  "fingerprint": {
+    "corpus_sha256": "507e67df55079b6891f54dac8334fb128dce6442edf7caa78949132a6a5117ad",
+    "corpus_records": 2508,
+    "model_sha256": "f3b48333b87424de0f164fc1478ac13d504270fe862e35d1bd1ca451de4c9425"
+  },
+  "shape": [
+    2508,
+    384
+  ],
+  "note": "Regenerate with: python app/build_embeddings.py"
+}

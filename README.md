@@ -6,6 +6,14 @@
 </p>
 
 <p align="center">
+  <a href="https://quotes-demo.streamlit.app/"><img alt="Live demo" src="https://img.shields.io/badge/▶_Live_demo-quotes--demo.streamlit.app-FF4B4B?logo=streamlit&logoColor=white&style=for-the-badge"/></a>
+</p>
+
+<p align="center">
+  <sub>Free tier — the app sleeps when idle and re-encodes the corpus on a cold start, so first paint can take a minute.</sub>
+</p>
+
+<p align="center">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white"/>
   <img alt="Sentence Transformers" src="https://img.shields.io/badge/sentence--transformers-4.1-FFBF00?logo=huggingface&logoColor=black"/>
   <img alt="FAISS" src="https://img.shields.io/badge/FAISS-IndexFlatL2-0467DF?logo=meta&logoColor=white"/>
@@ -128,9 +136,16 @@ and no model: it takes a float32 matrix and a callable that embeds text. `app.py
 real encoder, the tests supply six hand-placed vectors. Without that split, asserting anything
 about the percentile cutoff meant loading 91 MB of weights and starting a Streamlit session.
 
-**The index is rebuilt at startup, not loaded.** `load_model_and_index()` re-encodes the corpus
-under `@st.cache_resource`. The checked-in `quote_index.faiss` is an artefact of the notebook;
-the app does not read it.
+**The corpus embeddings are cached, and the cache is fingerprinted.** Encoding all 2,508 quotes
+dominated a cold start — 22.8s locally, worse on a free host. `quote_embeddings.npy` is committed
+and loaded instead, which takes 0.08s including building the flat index.
+
+The fingerprint is the load-bearing part. The notebook left behind a `quote_index.faiss` with
+exactly the right shape — 2,508 vectors of 384 dimensions — whose contents disagreed with the
+current corpus by up to 8.9e-4, because the notebook lowercased its text and the corpus has since
+been mojibake-repaired. Loading a cache because it *looks* right silently degrades every search.
+`embed_cache` records a SHA-256 of the corpus text and of the model weights, and refuses itself
+when either has moved; the app then re-encodes and rewrites. That stale index has been deleted.
 
 ## Project Structure
 
@@ -151,7 +166,10 @@ Quotes_Retrieval/
 │   ├── clean_quotes.py             # Mojibake repair for quotes.jsonl (dry-run by default)
 │   ├── quotes.jsonl                # Working corpus, 2,508 records
 │   ├── quotes.db                   # Generated SQLite catalogue (gitignored)
-│   ├── quote_index.faiss           # Serialised index from the notebook
+│   ├── quote_embeddings.npy        # Cached corpus vectors — skips encoding at startup
+│   ├── quote_embeddings.json       # Fingerprint of the corpus + model the cache came from
+│   ├── embed_cache.py              # Loads the cache, or refuses it when it is stale
+│   ├── build_embeddings.py         # Regenerates the cache
 │   ├── fine-tuned-quote-model/     # Saved SentenceTransformer (safetensors, tokenizer, pooling)
 │   └── .streamlit/
 │       ├── config.toml             # Dark theme matching the app's palette
@@ -202,7 +220,13 @@ is required to run the app.
 
 ## Usage
 
-### Run the app
+### Use the hosted app
+
+The deployed instance is at **<https://quotes-demo.streamlit.app/>** — no install required.
+It runs on a free tier, so it sleeps when idle and re-encodes all 2,508 quotes on a cold
+start; give it a minute on first load.
+
+### Run it locally
 
 ```bash
 streamlit run app/app.py
@@ -211,8 +235,9 @@ streamlit run app/app.py
 Paths resolve relative to `app.py` itself, so it runs from anywhere — including a hosted
 runner that starts from the repository root.
 
-First load encodes all 2,508 quotes and builds the FAISS index; it also creates `quotes.db`
-if it is missing. Subsequent interactions are cached.
+First load reads the cached corpus vectors and builds the FAISS index; it also creates
+`quotes.db` if it is missing. If the cache is absent or its fingerprint no longer matches the
+corpus and model, the app encodes in-process and rewrites it — correct either way, just slower.
 
 ### Run it in Docker
 
@@ -223,6 +248,16 @@ docker run --rm -p 8501:8501 -e HF_TOKEN=hf_xxx commonplace
 
 The image bakes in the fine-tuned model and builds the SQLite catalogue at build time, so the
 container starts and searches with no network access. Drop `-e HF_TOKEN` to run retrieval-only.
+
+### Rebuild the embedding cache
+
+After changing the corpus or retraining the model:
+
+```bash
+python app/build_embeddings.py
+```
+
+Forgetting to is safe — the fingerprint stops the app trusting a stale cache.
 
 ### Rebuild the SQLite catalogue
 
@@ -344,6 +379,7 @@ disabled.
 | `ftfy` | Reversing the cp1252/UTF-8 mojibake in the scraped corpus |
 | `scikit-learn` | The TF-IDF retrieval baseline in `eval/baseline.py` |
 | `sqlite3` (stdlib) | The author catalogue and tag intersection in `app/queries.sql` |
+| `hashlib` (stdlib) | Fingerprinting the embedding cache against the corpus and model |
 | `pytest`, `ruff` | Test suite and linting, run in CI on every push |
 
 ## Training
@@ -366,8 +402,6 @@ Reproduced in `quotes_retrieval.ipynb`:
   tag-derived queries. That catches a regression; it is not RAGAS, Quotient or Phoenix, and the
   labels are coarse — any quote by a matching author counts as a hit.
 - **`IndexFlatL2` is a brute-force scan.** Fine at 2,508 vectors; it does not scale.
-- **The corpus is re-encoded on every cold start** rather than loading the committed
-  `quote_index.faiss`, which makes first paint slow.
 - **The full corpus is searched with `k = len(quotes_data)`** on every query to compute the
   percentile cutoff — correct, but wasteful.
 - **The notebook still reads from an absolute Windows path** and will not run unedited elsewhere.
@@ -383,11 +417,9 @@ Reproduced in `quotes_retrieval.ipynb`:
 
 ## Roadmap
 
-- Load the persisted FAISS index instead of re-encoding at startup.
 - Restrict the FAISS search width instead of scanning the corpus for the percentile cutoff.
 - Move `secrets.toml` out of version control and document `.env`-based configuration.
 - Parameterise the notebook's dataset path.
-- Deploy publicly and put the link at the top of this file.
 - Widen the evaluation set and label it by relevance rather than by shared tag.
 
 ## License
